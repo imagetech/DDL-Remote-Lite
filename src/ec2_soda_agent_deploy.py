@@ -11,6 +11,7 @@ import aws_cdk.aws_iam as iam
 PROFILE = 'ddl-dev2'
 GLOBAL_KEYPAIR='DDL_Remote_Lite'
 CONTROL_IP="184.146.53.197"
+CDK_USER_DATA_FILE= "./scripts/portal_user_data.py"
 
 boto_session = boto3.Session(profile_name=PROFILE)
 
@@ -58,10 +59,58 @@ class Ec2DeploySoDAClientStack(Stack):
 
         self.createWorkstation()
 
+    ##########################################
+    ## create Workstation EC2
+    ####################################
+
+    def createWorkstation(self):
+        
+        instance_name = self.ec2_launch_params.get("instance_name", None)
+        instance_type = self.ec2_launch_params.get("instance_type", None)
+        ec2_role = self.ec2_launch_params.get("ec2_role", None)
+        ami_image = self.ec2_launch_params.get("ami_image", None)
+        sec_grp = self.ec2_launch_params.get("sec_grp", None)
+        vpc = self.ec2_launch_params.get("vpc", None)
+        keypair = self.ec2_launch_params.get("keypair", None)
+
+        # get and set user_data commands from external file
+        multipart_user_data = self.setUserData()
+
+
+        print (f'Creating EC2 Instance: {instance_name} using type: {instance_type} role: {ec2_role} with ami: {ami_image} USER_DATA:{multipart_user_data}')
+                
+        ec2_inst = aws_ec2.Instance(
+            self, 'ec2_inst', 
+            role=ec2_role,
+            instance_name=instance_name,
+            instance_type=instance_type,
+            machine_image=ami_image,
+            vpc=vpc,
+            user_data=multipart_user_data,
+            security_group=sec_grp,
+            key_name=keypair )
+
+        if not ec2_inst:
+            print ('Failed creating ec2 instance')
+            return 0
+
+        print ('EC2 CREATED:' + str(ec2_inst.instance_id))
+
+
+        print ('Set EIP')
+
+        # set EIP on the instance
+        #self.setEIP(ec2_inst)
+
+        print ('Finished EC2 Setup')
+
+        return ec2_inst
 
     ###################################################
     ## helper functions
+    ## some may require looping until elements of the ec2 creation has completed
     ####################################
+
     def getVPC(self):
 
         vpc_name = self.ec2_requested_params.get("vpc_name", None)
@@ -98,6 +147,7 @@ class Ec2DeploySoDAClientStack(Stack):
             print ('Found AMI image:' + str(ami_image))
 
         return ami_image
+
 
     ##################
     ### GLOBAL helpers
@@ -140,6 +190,30 @@ class Ec2DeploySoDAClientStack(Stack):
         print('***Deploy region:' + str(self.CDK_REGION))
 
         return 
+
+    # create the suer-data script run at first startup
+    def setUserData(self):
+
+        setup_command = aws_ec2.UserData.for_linux()
+        multipart_user_data = aws_ec2.MultipartUserData()
+        #multipart_user_data.add_user_data_part(setup_command, aws_ec2.MultipartBody.SHELL_SCRIPT, True)
+
+        print("Opening USER_DATA file:" + str(CDK_USER_DATA_FILE))
+        with open(CDK_USER_DATA_FILE, "r") as user_data_file:
+            line = user_data_file.readline()
+            while line:
+                sline = line.strip()
+                if sline:
+                    print("USER_DATA:" + str(sline))
+                    setup_command.add_commands(str(sline))
+                
+                line = user_data_file.readline()
+
+        
+        multipart_user_data.add_part(aws_ec2.MultipartBody.from_user_data(setup_command))
+        
+        return multipart_user_data
+
 
     ######################################################
     ## Security functions
@@ -192,10 +266,15 @@ class Ec2DeploySoDAClientStack(Stack):
             ec2_role = iam.Role(self, "DDL-RL-workstation-role", assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"), role_name=workstation_role)
             print("Creating role:" + str(ec2_role))
 
-            # assign a policy to the Role - access NICE license S3 bucket s3://ddl-transfer/Soda_Test/
-            ec2_resources = 's3://ddl-transfer/Soda_Test/*'
+            # assign a policy to the Role - access S3 bucket s3://ddl-transfer/Soda_Test/
+            ec2_resources = 'arn:aws:s3:::ddl-transfer/Soda_Test/*'
             print("Add Policy s3:GetObject for:" + str(ec2_resources))
             ec2_role.add_to_policy(iam.PolicyStatement( effect=iam.Effect.ALLOW, resources=[ec2_resources], actions=["s3:GetObject", "s3:PutObject"] ))
+
+            # assign a policy to the Role - able to work with EIPs
+            ec2_resources = '*'
+            print("Add Policy ec2:Allocate... EIP for:" + str(ec2_resources))
+            ec2_role.add_to_policy(iam.PolicyStatement( effect=iam.Effect.ALLOW, resources=[ec2_resources], actions=["ec2:DescribeAddresses", "ec2:AllocateAddress", "ec2:DescribeInstances", "ec2:DescribeInstanceAttribute", "ec2:AssociateAddress"] ))
 
            # Web Portal Cloudwatch policies
             print("Add Portal Policies ec2 for: *")
@@ -284,38 +363,6 @@ class Ec2DeploySoDAClientStack(Stack):
             return None
 
         return 1
-
-    ##########################################
-    ## create Workstation EC2
-    ####################################
-
-    def createWorkstation(self):
-        
-        instance_name = self.ec2_launch_params.get("instance_name", None)
-        instance_type = self.ec2_launch_params.get("instance_type", None)
-        ec2_role = self.ec2_launch_params.get("ec2_role", None)
-        ami_image = self.ec2_launch_params.get("ami_image", None)
-        sec_grp = self.ec2_launch_params.get("sec_grp", None)
-        vpc = self.ec2_launch_params.get("vpc", None)
-        keypair = self.ec2_launch_params.get("keypair", None)
-
-        print (f'Creating EC2 Instance: {instance_name} using type: {instance_type} role: {ec2_role} with ami: {ami_image}')
-                
-        ec2_inst = aws_ec2.Instance(
-            self, 'ec2_inst', 
-            role=ec2_role,
-            instance_name=instance_name,
-            instance_type=instance_type,
-            machine_image=ami_image,
-            vpc=vpc,
-            security_group=sec_grp,
-            key_name=keypair )
-
-        if not ec2_inst:
-            print ('Failed creating ec2 instance')
-            return
-
-        print ('Finished EC2 Setup')
 
 
 
