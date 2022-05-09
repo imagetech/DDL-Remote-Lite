@@ -1,0 +1,48 @@
+{
+    "HOME_REGION":"us-east-1",
+    "HOME_VPC":"vpc-0ae52f319112e065e",
+ 
+    "CONTROL_IP":"184.146.53.197",
+    "CONDUCTOR_EIP":"54.147.120.44",     
+    "PROFILE":"wefx-vdi-prod",
+    "GLOBAL_CONTROL_KEYPAIR":"DDL-Satellite_Control",
+    "CONDUCTOR_AMI":"SoDA_Conductor_pre_conductor_install",
+    "REQ_INSTANCE_TYPE":"t3.2xlarge",
+
+    "Satellites" : [
+        {
+            "region":"ca-central-1",
+            "portal_ip":"3.96.140.125",
+            "soda_agent_ip":"3.96.26.152",
+
+            "workstations": [
+                {
+                    "instance_type":"c6gd.medium",
+                    "public_ip":"1.1.1.1",
+                    "instance_name":"Workstation Fur 01"
+                },
+                {
+                    "instance_type":"c6gd.medium",
+                    "public_ip":"2.2.2.2",
+                    "instance_name":"Workstation Fur 02"
+                }
+            ]
+        },
+        {
+            "region":"us-east-1",
+            "portal_ip":"44.202.56.251",
+            "soda_agent_ip":"3.96.26.152",
+
+            "workstations": [
+                {
+                    "instance_type":"c6gd.medium",
+                    "public_ip":"1.1.1.1",
+                    "instance_name":"Artist Comp 01"
+                }
+            ]
+        }
+
+
+    ]
+
+}
