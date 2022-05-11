@@ -15,8 +15,8 @@ SODA_EXTERNAL_SERVER_IP=''
 
 # read from overview json
 HOME_VPC=''
-CONDUCTOR_AMI=''
-REQ_INSTANCE_TYPE=''
+TARGET_AMI=''
+CONDUCTOR_INSTANCE_TYPE=''
 GLOBAL_CONTROL_KEYPAIR=''
 PROFILE = ''
 CONTROL_IP=''             # ip of machine running and accessing Sat infrastructure
@@ -203,14 +203,14 @@ class Ec2DeployConductorStack(Stack):
         # TODO set with passed params
         self.ec2_requested_params['instance_name'] = 'DDL Satellite SoDA Conductor'
 
-        print("Set AMI:" + str(CONDUCTOR_AMI))
-        self.ec2_requested_params['ami_name'] = CONDUCTOR_AMI
+        print("Set AMI:" + str(TARGET_AMI))
+        self.ec2_requested_params['ami_name'] = TARGET_AMI
 
         self.ec2_requested_params['role_name'] = "DDL-SAT_Conductor_Role"
         self.ec2_requested_params['profile'] = PROFILE
 
         # derived from account
-        self.ec2_requested_params['req_instance_type'] = REQ_INSTANCE_TYPE
+        self.ec2_requested_params['req_instance_type'] = CONDUCTOR_INSTANCE_TYPE
         self.ec2_requested_params['vpc'] = HOME_VPC
 
         self.inbound_rules = []             ## inbound rules
@@ -229,9 +229,9 @@ class Ec2DeployConductorStack(Stack):
     # read the overview json to get the configuration for the satellite deployment
     def readSatelliteConfig(self):
 
-        global CONDUCTOR_AMI
+        global TARGET_AMI
         global HOME_VPC
-        global REQ_INSTANCE_TYPE
+        global CONDUCTOR_INSTANCE_TYPE
         global GLOBAL_CONTROL_KEYPAIR
         global PROFILE
         global CONTROL_IP
@@ -248,22 +248,22 @@ class Ec2DeployConductorStack(Stack):
             print("Explicit VPC Set:" + HOME_VPC)
 
         # get the source AMI - CONDUCTOR_AMI
-        CONDUCTOR_AMI =  config_json.get("CONDUCTOR_AMI", None)
-        print("Read CONDUCTOR_AMI:" + CONDUCTOR_AMI)
-        if  not CONDUCTOR_AMI:
+        TARGET_AMI =  config_json.get("CONDUCTOR_AMI", None)
+        print("Read TARGET_AMI:" + TARGET_AMI)
+        if  not TARGET_AMI:
             print("No AMI set in sat_overview.json")
             exit()
         else:
-            print("Set CONDUCTOR_AMI:" + CONDUCTOR_AMI)
+            print("Set TARGET_AMI:" + TARGET_AMI)
 
         # get the required instance type
-        REQ_INSTANCE_TYPE =  config_json.get("REQ_INSTANCE_TYPE", None)
-        print("Read REQ_INSTANCE_TYPE:" + REQ_INSTANCE_TYPE)
-        if  not REQ_INSTANCE_TYPE:
+        self.CDK_TARGET_REGION =  config_json.get("CONDUCTOR_INSTANCE_TYPE", None)
+        print("Read CONDUCTOR_INSTANCE_TYPE:" + CONDUCTOR_INSTANCE_TYPE)
+        if  not self.CDK_TARGET_REGION:
             print("No instance type set in sat_overview.json")
             exit()
         else:
-            print("Set REQ_INSTANCE_TYPE:" + REQ_INSTANCE_TYPE)
+            print("Set CONDUCTOR_INSTANCE_TYPE:" + CONDUCTOR_INSTANCE_TYPE)
 
         # get the required keypair type
         GLOBAL_CONTROL_KEYPAIR =  config_json.get("GLOBAL_CONTROL_KEYPAIR", None)
