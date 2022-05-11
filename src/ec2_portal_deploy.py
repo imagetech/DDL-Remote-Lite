@@ -3,17 +3,28 @@ from aws_cdk import ( Stack, aws_ec2)
 from constructs import Construct
 import boto3
 import botocore
+import json
 
+import aws_cdk as cdk
 import aws_cdk.aws_iam as iam
 #import aws_iam as iam
 
-#TODO passed and external
-PROFILE = 'ddl-dev2'
-GLOBAL_KEYPAIR='DDL_Remote_Lite'
-CONTROL_IP="184.146.53.197"
 
-boto_session = boto3.Session(profile_name=PROFILE)
+CDK_USER_DATA_FILE= "./scripts/soda_agent_user_data.py"
+SAT_OVERVIEW_FILE="satellite_config/sat_overview.json";
 
+
+TARGET_AMI=''
+REQ_INSTANCE_TYPE=''
+GLOBAL_CONTROL_KEYPAIR=''
+PROFILE=''
+CONTROL_IP=''
+CONDUCTOR_IP=''
+TARGET_VPC=''
+PORTAL_INSTANCE_TYPE=''
+
+
+print("#################################### ec2_portal_deploy ###############################")
 class Ec2DeployPortalStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -21,27 +32,50 @@ class Ec2DeployPortalStack(Stack):
 
         print("kwargs:" + str(kwargs))
 
+        global boto_session
+
+        self.CDK_TARGET_REGION=os.getenv('CDK_TARGET_REGION')
+
         ## dicts to store the requested parameters and their matching created object
         #  store the requested parameters for the ec2 being deployed
         self.ec2_requested_params = {}
         # store the derived launch parameters for the ec2 being deployed
         self.ec2_launch_params = {}
-        print("Pre-set REQUESTED PARAMETERS:" + str(self.ec2_requested_params))
+
+
+        # read overview config json
+        sat_config = self.readSatelliteConfig()
+
+        # set up global boto session
+        boto_session = boto3.Session(profile_name=PROFILE)
+
+        self.CDK_TARGET_REGION=os.getenv('CDK_TARGET_REGION')
+
+        # review passed parameters
+        passed_params = kwargs.get("env", {})
+        print("passed_params:" + str(passed_params))
+        self.ec2_requested_params['env'] =passed_params
+        self.ec2_requested_params['target_region'] = self.CDK_TARGET_REGION
+
+        # get the VPC id if not explicitly set
+        if TARGET_VPC:
+            self.ec2_requested_params['vpc_name'] = TARGET_VPC
+            print("Explicit Target VPC Set:" + TARGET_VPC)
+        else:
+            self.getDefaultVPC()
+            print("No VPC Set so using default")
+
 
         ## set the parameters requested for the instance
         self.setEc2RequestedParameters()
         print("REQUESTED PARAMETERS:" + str(self.ec2_requested_params))
 
-        # review passed parameters
-        passed_params = kwargs.get("env", {})
-        #passed_env = passed_params.get("Environment", {})
-        print("passed_params:" + str(passed_params))
-        #print("passed_env:" + str(passed_env))
 
         # set admin keypair (global for customer)
-        self.ec2_launch_params['keypair'] = GLOBAL_KEYPAIR
+        self.ec2_launch_params['keypair'] = GLOBAL_CONTROL_KEYPAIR
         # get ami image to use
         self.ec2_launch_params['ami_image'] = self.getAMI_image()
+
 
         # determine instance type for ec2
         self.ec2_launch_params['instance_type'] = self.getInstanceType()
@@ -59,9 +93,39 @@ class Ec2DeployPortalStack(Stack):
         self.createWorkstation()
 
 
+
     ###################################################
     ## helper functions
     ####################################
+    
+    # get the VPC id for the default VPC to deploy in
+    def getDefaultVPC(self):
+    
+        target_region = self.ec2_requested_params['target_region']
+        print("target_region------:" + str(target_region))
+        vpc_client = boto3.client("ec2", region_name=target_region)
+
+        # get all VPCs in the region
+        response = vpc_client.describe_vpcs()
+        print("VPC ID response:" + str(response))   
+        vpcs = response.get("Vpcs", None)
+
+        # find the default VPC
+        for curr_vpc in vpcs:
+            print("Current VPC:" + str(curr_vpc))
+            if curr_vpc.get("IsDefault", None):
+                vpc_id = curr_vpc.get("VpcId")
+
+        print("VPC ID:" + str(vpc_id))
+            
+        self.ec2_requested_params["vpc_name"] = vpc_id
+
+        if not vpc_id:
+            print ('Failed finding VPC')
+            return None
+            
+        return vpc_id
+
     def getVPC(self):
 
         vpc_name = self.ec2_requested_params.get("vpc_name", None)
@@ -70,7 +134,7 @@ class Ec2DeployPortalStack(Stack):
         if not vpc:
             print ('Failed finding VPC')
             return None
-            
+                
         return vpc
 
     def getInstanceType(self):
@@ -90,7 +154,8 @@ class Ec2DeployPortalStack(Stack):
         ami_name = self.ec2_requested_params.get("ami_name", None)
         print (f'Looking up AMI: {ami_name}')
         
-        ami_image = aws_ec2.MachineImage().lookup(name=ami_name)
+        #ami_image = aws_ec2.MachineImage().lookup(name=ami_name)
+        ami_image = aws_ec2.LookupMachineImage(name=ami_name)
         if not ami_image:
             print ('Failed finding AMI image')
             return
@@ -99,16 +164,21 @@ class Ec2DeployPortalStack(Stack):
 
         return ami_image
 
-    def getDefVPCid(self):
-        client = boto_session.client('ec2',region_name=self.CDK_REGION)
+    # check VPC id exists in the account region
+    def getVPCid(self):
+
+        client = boto_session.client('ec2',region_name=self.region)
         response = client.describe_vpcs()
 
+        vpc_id=''
         results = response['Vpcs']
         if results:
             print("VPC:" + str(results))
-            vpc_info = results[0]
-            vpc_id = vpc_info.get("VpcId", None)
-            print("Got VPC ID:" + str(vpc_id))
+            for vpc_info in results:
+                vpc_id = vpc_info.get("VpcId", None)
+                if vpc_id == HOME_VPC:
+                    print("Matched VPC ID:" + str(vpc_id))
+                    break
         else:
             print('No vpcs found')
 
@@ -133,27 +203,37 @@ class Ec2DeployPortalStack(Stack):
 
         print(f'Set Requested EC2 parameters')
 
-        # TODO set with passed params
-        self.ec2_requested_params['instance_name'] = 'DDL Portal'
-        self.ec2_requested_params['ami_name'] = 'WWW DDL Portal'
-
-        self.ec2_requested_params['role_name'] = "DDL-RL-portal-role"
-        self.ec2_requested_params['profile'] = PROFILE
-
         # derived from account
-        self.ec2_requested_params['req_instance_type'] = 't2.micro'
+        self.ec2_requested_params['req_instance_type'] = PORTAL_INSTANCE_TYPE
         self.ec2_requested_params['vpc'] = ''
 
         self.inbound_rules = []             ## inbound rules
         
         self.ec2_launch_params['ec2_role'] = None
 
-        ## TODO TEMP set vals
-        self.CDK_REGION=os.getenv('CDK_DEFAULT_REGION')
-        print('***Deploy region:' + str(self.CDK_REGION))
-
-        self.ec2_requested_params['vpc_name'] = self.getDefVPCid()
+        self.ec2_requested_params['vpc_name'] = self.getVPCid()
         print('***Using VPC:' + str(self.ec2_requested_params['vpc_name']))
+
+        self.ec2_requested_params['instance_name'] = 'DDL Portal'
+
+        print("Set AMI:" + str(TARGET_AMI))
+        self.ec2_requested_params['ami_name'] = TARGET_AMI
+
+
+        self.ec2_requested_params['role_name'] = "DDL-RL-portal-role"
+        self.ec2_requested_params['profile'] = PROFILE
+
+        # derived from account
+        self.ec2_requested_params['req_instance_type'] = PORTAL_INSTANCE_TYPE
+        self.ec2_requested_params['vpc'] = ''
+
+        self.inbound_rules = []             ## inbound rules
+        
+        self.ec2_launch_params['ec2_role'] = None
+
+        self.ec2_requested_params['vpc_name'] = self.getVPCid()
+        print('***Using VPC:' + str(self.ec2_requested_params['vpc_name']))
+
 
         return 
 
@@ -209,7 +289,7 @@ class Ec2DeployPortalStack(Stack):
             print("Creating role:" + str(ec2_role))
 
             # assign a policy to the Role - access NICE license S3 bucket
-            ec2_resources = 'arn:aws:s3:::dcv-license.' + str(self.CDK_REGION) + '/*'
+            ec2_resources = 'arn:aws:s3:::dcv-license.' + str(self.CDK_TARGET_REGION) + '/*'
             print("Add Policy s3:GetObject for:" + str(ec2_resources))
             ec2_role.add_to_policy(iam.PolicyStatement( effect=iam.Effect.ALLOW, resources=[ec2_resources], actions=["s3:GetObject"] ))
 
@@ -309,6 +389,86 @@ class Ec2DeployPortalStack(Stack):
             return None
 
         return 1
+
+   # read the overview json to get the configuration for the satellite deployment
+    def readSatelliteConfig(self):
+
+        global HOME_VPC
+        global PORTAL_INSTANCE_TYPE
+        global GLOBAL_CONTROL_KEYPAIR
+        global PROFILE
+        global CONTROL_IP
+        global CONDUCTOR_IP
+        global TARGET_VPC
+        global TARGET_AMI
+
+        # GLOBAL settings
+        print("Open config file:" + SAT_OVERVIEW_FILE)
+        with open(SAT_OVERVIEW_FILE) as sat_config:
+            config_json = json.load(sat_config)
+  
+        # check for explicit VPC or default
+        HOME_VPC =  config_json.get("HOME_VPC", None)
+        if  not HOME_VPC:
+            print("No VPC Set so using default")
+        else:
+            print("Explicit VPC Set:" + HOME_VPC)
+
+        # get the source AMI - PORTAL_AMI
+        TARGET_AMI =  config_json.get("PORTAL_AMI", None)
+        print("Read TARGET_AMI:" + TARGET_AMI)
+        if  not TARGET_AMI:
+            print("No AMI set in sat_overview.json")
+            exit()
+        else:
+            print("Set TARGET_AMI:" + TARGET_AMI)
+       
+        # get the required instance type
+        PORTAL_INSTANCE_TYPE =  config_json.get("PORTAL_INSTANCE_TYPE", None)
+        print("Read PORTAL_INSTANCE_TYPE:" + PORTAL_INSTANCE_TYPE)
+        if  not PORTAL_INSTANCE_TYPE:
+            print("No instance type set in sat_overview.json")
+            exit()
+        else:
+            print("Set PORTAL_INSTANCE_TYPE:" + PORTAL_INSTANCE_TYPE)
+
+        # get the required keypair type
+        GLOBAL_CONTROL_KEYPAIR =  config_json.get("GLOBAL_CONTROL_KEYPAIR", None)
+        if  not GLOBAL_CONTROL_KEYPAIR:
+            print("No keypair set in sat_overview.json")
+            exit()
+        else:
+            print("Set GLOBAL_CONTROL_KEYPAIR:" + GLOBAL_CONTROL_KEYPAIR)
+
+        # get the required keypair type
+        PROFILE =  config_json.get("PROFILE", None)
+        if  not PROFILE:
+            print("No profile set in sat_overview.json")
+            exit()
+        else:
+            print("Set PROFILE:" + PROFILE)
+
+        # get the required control IP
+        CONTROL_IP =  config_json.get("CONTROL_IP", None)
+        if  not CONTROL_IP:
+            print("No control IP set in sat_overview.json")
+            exit()
+        else:
+            print("Set CONTROL_IP:" + CONTROL_IP)
+
+        #REGION SETTINGS 
+        satellite_regions = config_json.get('Satellites', [])
+        for satellite_region in satellite_regions:
+            # get settings for this region
+            if satellite_region.get('region', None) == self.CDK_TARGET_REGION:
+                TARGET_VPC = satellite_region.get('TARGET_VPC', None)
+                print("Region " + str(TARGET_VPC) + "config__")
+                print("        -- TARGET_AMI:" + str(TARGET_AMI))
+                print("        -- TARGET_VPC:" + str(TARGET_VPC))
+                break   # found it
+
+        return config_json
+
 
     ##########################################
     ## create Workstation EC2
