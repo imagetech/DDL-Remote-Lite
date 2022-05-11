@@ -1,19 +1,27 @@
 {
     "HOME_REGION":"us-east-1",
     "HOME_VPC":"vpc-0ae52f319112e065e",
- 
-    "CONTROL_IP":"184.146.53.197",
-    "CONDUCTOR_EIP":"54.147.120.44",     
-    "PROFILE":"wefx-vdi-prod",
-    "GLOBAL_CONTROL_KEYPAIR":"DDL-Satellite_Control",
-    "CONDUCTOR_AMI":"SoDA_Conductor_pre_conductor_install",
-    "REQ_INSTANCE_TYPE":"t3.2xlarge",
 
+    "CONTROL_IP":"184.146.53.197",
+    "CONDUCTOR_EIP":"54.147.120.44",
+    "PROFILE":"wefx-vdi-prod",
+    "GLOBAL_CONTROL_KEYPAIR":"DDL-Satellite_Control_Key",
+    "CONDUCTOR_AMI":"SoDA_Conductor_pre_conductor_install",
+    "CONDUCTOR_INSTANCE_TYPE":"t3.2xlarge",
+    "PORTAL_INSTANCE_TYPE":"t2.micro",
+    "PORTAL_AMI":"DDL-Sat Portal (SAT-PT)",
+    "AGENT_INSTANCE_TYPE":"c6g.large",
+   
     "Satellites" : [
         {
-            "region":"ca-central-1",
-            "portal_ip":"3.96.140.125",
-            "soda_agent_ip":"3.96.26.152",
+            "region":"ap-northeast-2",
+            "portal_ip":"",
+            "soda_agent_ip":"3.39.128.100",
+            "AGENT_AMI":"DDL-SAT SoDA Agent (ap-ne2)",
+            "WORKSTATION_AMI":"DDL Sat Workstation (SAT-WS)",
+            "WORKSTATION_INSTANCE_TYPE":"t2.micro",
+            
+            "TARGET_HOME_VPC":"",
 
             "workstations": [
                 {
@@ -27,21 +35,7 @@
                     "instance_name":"Workstation Fur 02"
                 }
             ]
-        },
-        {
-            "region":"us-east-1",
-            "portal_ip":"44.202.56.251",
-            "soda_agent_ip":"3.96.26.152",
-
-            "workstations": [
-                {
-                    "instance_type":"c6gd.medium",
-                    "public_ip":"1.1.1.1",
-                    "instance_name":"Artist Comp 01"
-                }
-            ]
         }
-
 
     ]
 
