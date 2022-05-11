@@ -1,46 +1,75 @@
+from distutils.command.config import config
 import os
 from aws_cdk import ( Stack, aws_ec2)
 from constructs import Construct
 import boto3
 import botocore
+import json
 
 import aws_cdk.aws_iam as iam
 #import aws_iam as iam
 
-#TODO passed and external
-PROFILE = 'ddl-dev2'
-GLOBAL_KEYPAIR='DDL_Remote_Lite'
-CONTROL_IP="184.146.53.197"
-CDK_USER_DATA_FILE= "./scripts/portal_user_data.py"
 
-boto_session = boto3.Session(profile_name=PROFILE)
+CDK_USER_DATA_FILE= "./scripts/soda_agent_user_data.py"
+SAT_OVERVIEW_FILE="satellite_config/sat_overview.json";
 
-class Ec2DeploySoDAClientStack(Stack):
+
+TARGET_AMI=''
+REQ_INSTANCE_TYPE=''
+GLOBAL_CONTROL_KEYPAIR=''
+PROFILE=''
+CONTROL_IP=''
+CONDUCTOR_IP=''
+TARGET_VPC=''
+AGENT_INSTANCE_TYPE=''
+
+class Ec2DeploySoDAAgentStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         print("kwargs:" + str(kwargs))
 
+        global boto_session
+
+        self.CDK_TARGET_REGION=os.getenv('CDK_TARGET_REGION')
+
         ## dicts to store the requested parameters and their matching created object
         #  store the requested parameters for the ec2 being deployed
         self.ec2_requested_params = {}
         # store the derived launch parameters for the ec2 being deployed
         self.ec2_launch_params = {}
-        print("Pre-set REQUESTED PARAMETERS:" + str(self.ec2_requested_params))
+
+        # read overview config json
+        sat_config = self.readSatelliteConfig()
+
+        # set up global boto session
+        boto_session = boto3.Session(profile_name=PROFILE)
+
+        self.CDK_TARGET_REGION=os.getenv('CDK_TARGET_REGION')
+
+        # review passed parameters
+        passed_params = kwargs.get("env", {})
+        print("passed_params:" + str(passed_params))
+        self.ec2_requested_params['env'] =passed_params
+        self.ec2_requested_params['target_region'] = self.CDK_TARGET_REGION
+
+        # get the VPC id if not explicitly set
+        if TARGET_VPC:
+            self.ec2_requested_params['vpc_name'] = TARGET_VPC
+            print("Explicit Target VPC Set:" + TARGET_VPC)
+        else:
+            self.getDefaultVPC()
+            print("No VPC Set so using default")
+
 
         ## set the parameters requested for the instance
         self.setEc2RequestedParameters()
         print("REQUESTED PARAMETERS:" + str(self.ec2_requested_params))
 
-        # review passed parameters
-        passed_params = kwargs.get("env", {})
-        #passed_env = passed_params.get("Environment", {})
-        print("passed_params:" + str(passed_params))
-        #print("passed_env:" + str(passed_env))
 
         # set admin keypair (global for customer)
-        self.ec2_launch_params['keypair'] = GLOBAL_KEYPAIR
+        self.ec2_launch_params['keypair'] = GLOBAL_CONTROL_KEYPAIR
         # get ami image to use
         self.ec2_launch_params['ami_image'] = self.getAMI_image()
 
@@ -111,6 +140,35 @@ class Ec2DeploySoDAClientStack(Stack):
     ## some may require looping until elements of the ec2 creation has completed
     ####################################
 
+    # get the VPC id for the default VPC to deploy in
+    def getDefaultVPC(self):
+    
+        target_region = self.ec2_requested_params['target_region']
+        print("target_region------:" + str(target_region))
+        vpc_client = boto3.client("ec2", region_name=target_region)
+
+        # get all VPCs in the region
+        response = vpc_client.describe_vpcs()
+        print("VPC ID response:" + str(response))   
+        vpcs = response.get("Vpcs", None)
+
+        # find the default VPC
+        for curr_vpc in vpcs:
+            print("Current VPC:" + str(curr_vpc))
+            if curr_vpc.get("IsDefault", None):
+                vpc_id = curr_vpc.get("VpcId")
+
+        print("VPC ID:" + str(vpc_id))
+            
+        self.ec2_requested_params["vpc_name"] = vpc_id
+
+        if not vpc_id:
+            print ('Failed finding VPC')
+            return None
+            
+        return vpc_id
+
+
     def getVPC(self):
 
         vpc_name = self.ec2_requested_params.get("vpc_name", None)
@@ -119,7 +177,7 @@ class Ec2DeploySoDAClientStack(Stack):
         if not vpc:
             print ('Failed finding VPC')
             return None
-            
+                
         return vpc
 
     def getInstanceType(self):
@@ -148,6 +206,25 @@ class Ec2DeploySoDAClientStack(Stack):
 
         return ami_image
 
+    # check VPC id exists in the account region
+    def getVPCid(self):
+
+        client = boto_session.client('ec2',region_name=self.region)
+        response = client.describe_vpcs()
+
+        vpc_id=''
+        results = response['Vpcs']
+        if results:
+            print("VPC:" + str(results))
+            for vpc_info in results:
+                vpc_id = vpc_info.get("VpcId", None)
+                if vpc_id == HOME_VPC:
+                    print("Matched VPC ID:" + str(vpc_id))
+                    break
+        else:
+            print('No vpcs found')
+
+        return vpc_id
 
     ##################
     ### GLOBAL helpers
@@ -170,28 +247,102 @@ class Ec2DeploySoDAClientStack(Stack):
 
         # TODO set with passed params
         self.ec2_requested_params['instance_name'] = 'DDL SoDA Agent'
-        self.ec2_requested_params['ami_name'] = 'SoDA_client_ARM'
-        self.ec2_requested_params['vpc_name'] = 'vpc-eccbe784'
 
+        print("Set AMI:" + str(TARGET_AMI))
+        self.ec2_requested_params['ami_name'] = TARGET_AMI
 
         self.ec2_requested_params['role_name'] = "DDL_Test_Soda_Client_Role"
         self.ec2_requested_params['profile'] = PROFILE
 
         # derived from account
-        self.ec2_requested_params['req_instance_type'] = 'c6g.large'
+        self.ec2_requested_params['req_instance_type'] = AGENT_INSTANCE_TYPE
         self.ec2_requested_params['vpc'] = ''
 
         self.inbound_rules = []             ## inbound rules
         
         self.ec2_launch_params['ec2_role'] = None
 
-        ## TODO TEMP set vals
-        self.CDK_REGION=os.getenv('CDK_DEFAULT_REGION')
-        print('***Deploy region:' + str(self.CDK_REGION))
+
+        self.ec2_requested_params['vpc_name'] = self.getVPCid()
+        print('***Using VPC:' + str(self.ec2_requested_params['vpc_name']))
+
 
         return 
 
-    # create the suer-data script run at first startup
+    # read the overview json to get the configuration for the satellite deployment
+    def readSatelliteConfig(self):
+
+        global HOME_VPC
+        global AGENT_INSTANCE_TYPE
+        global GLOBAL_CONTROL_KEYPAIR
+        global PROFILE
+        global CONTROL_IP
+        global CONDUCTOR_IP
+        global TARGET_VPC
+        global TARGET_AMI
+
+        # GLOBAL settings
+        print("Open config file:" + SAT_OVERVIEW_FILE)
+        with open(SAT_OVERVIEW_FILE) as sat_config:
+            config_json = json.load(sat_config)
+  
+        # check for explicit VPC or default
+        HOME_VPC =  config_json.get("HOME_VPC", None)
+        if  not HOME_VPC:
+            print("No VPC Set so using default")
+        else:
+            print("Explicit VPC Set:" + HOME_VPC)
+
+       
+        # get the required instance type
+        AGENT_INSTANCE_TYPE =  config_json.get("AGENT_INSTANCE_TYPE", None)
+        print("Read AGENT_INSTANCE_TYPE:" + AGENT_INSTANCE_TYPE)
+        if  not AGENT_INSTANCE_TYPE:
+            print("No instance type set in sat_overview.json")
+            exit()
+        else:
+            print("Set AGENT_INSTANCE_TYPE:" + AGENT_INSTANCE_TYPE)
+
+        # get the required keypair type
+        GLOBAL_CONTROL_KEYPAIR =  config_json.get("GLOBAL_CONTROL_KEYPAIR", None)
+        if  not GLOBAL_CONTROL_KEYPAIR:
+            print("No keypair set in sat_overview.json")
+            exit()
+        else:
+            print("Set GLOBAL_CONTROL_KEYPAIR:" + GLOBAL_CONTROL_KEYPAIR)
+
+        # get the required keypair type
+        PROFILE =  config_json.get("PROFILE", None)
+        if  not PROFILE:
+            print("No profile set in sat_overview.json")
+            exit()
+        else:
+            print("Set PROFILE:" + PROFILE)
+
+        # get the required control IP
+        CONTROL_IP =  config_json.get("CONTROL_IP", None)
+        if  not CONTROL_IP:
+            print("No control IP set in sat_overview.json")
+            exit()
+        else:
+            print("Set CONTROL_IP:" + CONTROL_IP)
+
+        #REGION SETTINGS 
+        satellite_regions = config_json.get('Satellites', [])
+        for satellite_region in satellite_regions:
+            # get settings for this region
+            if satellite_region.get('region', None) == self.CDK_TARGET_REGION:
+                TARGET_AMI = satellite_region.get('AGENT_AMI', None)
+                TARGET_VPC = satellite_region.get('TARGET_VPC', None)
+                print("Region " + str(TARGET_VPC) + "config__")
+                print("        -- TARGET_AMI:" + str(TARGET_AMI))
+                print("        -- TARGET_VPC:" + str(TARGET_VPC))
+                break   # found it
+
+        return config_json
+
+
+    # create the user-data script run at first startup
     def setUserData(self):
 
         setup_command = aws_ec2.UserData.for_linux()
@@ -263,7 +414,7 @@ class Ec2DeploySoDAClientStack(Stack):
         
         else:
             print("Creating role:" + str(workstation_role)) 
-            ec2_role = iam.Role(self, "DDL-RL-workstation-role", assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"), role_name=workstation_role)
+            ec2_role = iam.Role(self, workstation_role, assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"), role_name=workstation_role)
             print("Creating role:" + str(ec2_role))
 
             # assign a policy to the Role - access S3 bucket s3://ddl-transfer/Soda_Test/
